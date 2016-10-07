@@ -2,12 +2,10 @@ import numpy as np
 import pandas as pd
 
 # Load data files
-from numpy.core.tests.test_numerictypes import read_values_nested
-
 train_data_file = './data/toy_train.csv'
 test_data_file = './data/toy_test.csv'
-# trainDataFile = './data/restaurant_train.csv'
-# testDataFile = './data/restaurant_test.csv'
+# train_data_file = './data/restaurant_train.csv'
+# test_data_file = './data/restaurant_test.csv'
 
 train_data = pd.read_csv(train_data_file)
 train_data.columns = ['user_id', 'item_id', 'rating']
@@ -68,7 +66,7 @@ class RecommendationPredictor(object):
 
             # Get the user's 40 nearest neighbors from the similarity_matrix
             # Excluding oneself
-            neighbors = similarity_matrix.ix[user_name].order(ascending=False)[1:41]
+            neighbors = self.similarity_matrix.ix[user_name].order(ascending=False)[1:41]
             neighbors = neighbors.to_frame(name='sim_score')
 
             # Get average ratings of all the neighbors
@@ -78,7 +76,8 @@ class RecommendationPredictor(object):
             neighbors['product_rating'] = self.train_matrix.ix[neighbors.index, item_name]
 
             # Calculate prediction with formula 2.3
-            n_nominator = (neighbors['sim_score'] * (neighbors['product_rating'] - neighbors['avg_rating'])).sum(skipna=True)
+            n_nominator = (neighbors['sim_score'] * (neighbors['product_rating'] - neighbors['avg_rating'])).sum(
+                skipna=True)
 
             pred_rating = u_avg_rate + n_nominator / (neighbors['sim_score']).sum(skipna=True)
 
@@ -97,13 +96,20 @@ class RecommendationPredictor(object):
 
 rec_predictor = RecommendationPredictor(training_data_matrix)
 
-# TODO
 # Predict user ratings on test data set
-print test_data.ix[1:10]
-rec_predictor.predict_rating('user39', 'item7')
+
+# Create a new column in the test dataframe for predicted value
+test_data['predicted'] = np.nan
+
+for row in test_data.itertuples():
+    pred = rec_predictor.predict_rating(row[1], row[2])
+    test_data.set_value(row[0], 'predicted', pred)
 
 
 # Compare result using RMSE
+def calculate_rmse(actual, prediction):
+    return np.sqrt(((prediction - actual) ** 2).mean())
 
 
-
+rmse = calculate_rmse(test_data['rating'], test_data['predicted'])
+print "RMSE on test data set is: %s" % (rmse)
