@@ -2,10 +2,10 @@ import numpy as np
 import pandas as pd
 
 # Load data files
-train_data_file = './data/toy_train.csv'
-test_data_file = './data/toy_test.csv'
-# train_data_file = './data/restaurant_train.csv'
-# test_data_file = './data/restaurant_test.csv'
+# train_data_file = './data/toy_train.csv'
+# test_data_file = './data/toy_test.csv'
+train_data_file = './data/restaurant_train.csv'
+test_data_file = './data/restaurant_test.csv'
 
 train_data = pd.read_csv(train_data_file)
 train_data.columns = ['user_id', 'item_id', 'rating']
@@ -28,7 +28,7 @@ and we calculate the prediction with test data
 # Create rating matrix from training data
 training_data_matrix = train_data.pivot_table(values='rating', index='user_id', columns='item_id')
 assert training_data_matrix.shape == (len(train_data.user_id.unique()), len(train_data.item_id.unique()))
-print 'Training data matrix shape: %s X %s' % (training_data_matrix.shape[0], training_data_matrix.shape[1])
+print 'Training data matrix shape: %s users X %s businesses' % (training_data_matrix.shape[0], training_data_matrix.shape[1])
 
 
 # Create a recommendation predictor object to predict user ratings
@@ -95,6 +95,8 @@ class RecommendationPredictor(object):
 
 
 rec_predictor = RecommendationPredictor(training_data_matrix)
+cosine_sim_matrix = rec_predictor.get_similarity_matrix()
+print 'Calculated user similarity matrix shape: %s X %s users' % (cosine_sim_matrix.shape[0], cosine_sim_matrix.shape[1])
 
 # Predict user ratings on test data set
 
@@ -105,6 +107,7 @@ for row in test_data.itertuples():
     pred = rec_predictor.predict_rating(row[1], row[2])
     test_data.set_value(row[0], 'predicted', pred)
 
+print 'Test dataset user-business rating predictions: %s ' % (len(test_data.index))
 
 # Compare result using RMSE
 def calculate_rmse(actual, prediction):
@@ -112,4 +115,4 @@ def calculate_rmse(actual, prediction):
 
 
 rmse = calculate_rmse(test_data['rating'], test_data['predicted'])
-print "RMSE on test data set is: %s" % (rmse)
+print "RMSE on test dataset is: %s" % (rmse)
