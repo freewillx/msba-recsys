@@ -1,11 +1,30 @@
 import numpy as np
 import pandas as pd
+import logging
+
+# create logger
+logger = logging.getLogger('recsys')
+logger.setLevel(logging.DEBUG)
+
+# create console handler and set level to debug
+#log_handler = logging.StreamHandler()
+log_handler = logging.FileHandler('/tmp/recsys.log', 'w')
+log_handler.setLevel(logging.DEBUG)
+
+# create formatter
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+
+# add formatter to ch
+log_handler.setFormatter(formatter)
+
+# add ch to logger
+logger.addHandler(log_handler)
 
 # Load data files
-# train_data_file = './data/toy_train.csv'
-# test_data_file = './data/toy_test.csv'
-train_data_file = './data/restaurant_train.csv'
-test_data_file = './data/restaurant_test.csv'
+train_data_file = './data/toy_train.csv'
+test_data_file = './data/toy_test.csv'
+# train_data_file = './data/restaurant_train.csv'
+# test_data_file = './data/restaurant_test.csv'
 
 train_data = pd.read_csv(train_data_file)
 train_data.columns = ['user_id', 'item_id', 'rating']
@@ -28,7 +47,7 @@ and we calculate the prediction with test data
 # Create rating matrix from training data
 training_data_matrix = train_data.pivot_table(values='rating', index='user_id', columns='item_id')
 assert training_data_matrix.shape == (len(train_data.user_id.unique()), len(train_data.item_id.unique()))
-print 'Training data matrix shape: %s users X %s businesses' % (training_data_matrix.shape[0], training_data_matrix.shape[1])
+logger.info('Training data matrix shape: %s users X %s businesses' % (training_data_matrix.shape[0], training_data_matrix.shape[1]))
 
 
 # Create a recommendation predictor object to predict user ratings
@@ -52,8 +71,14 @@ class RecommendationPredictor(object):
     # Define function to calculate similarities between all users using formula 2.5 from the text book
     def __calculate_user_sim_matrix(self, mtrx):
         mtrx_df = pd.DataFrame()
-        for i in range(0, len(mtrx)):
-            u = mtrx[mtrx.index == mtrx.index[i]].squeeze()
+
+        # Loop over the rows of each user to get their ratings
+        for uid in range(0, len(mtrx)):
+            logger.info('calculating similarity for user number %d' % (uid))
+
+            # Get user ratings as dataframe
+            u = mtrx[mtrx.index == mtrx.index[uid]].squeeze()
+
             sim_serie = mtrx.apply(lambda x: self.__cosine_sim(u, x.squeeze()), axis=1)
             mtrx_df[u.name] = sim_serie
         return mtrx_df
@@ -96,7 +121,7 @@ class RecommendationPredictor(object):
 
 rec_predictor = RecommendationPredictor(training_data_matrix)
 cosine_sim_matrix = rec_predictor.get_similarity_matrix()
-print 'Calculated user similarity matrix shape: %s X %s users' % (cosine_sim_matrix.shape[0], cosine_sim_matrix.shape[1])
+logger.info('Calculated user similarity matrix shape: %s X %s users' % (cosine_sim_matrix.shape[0], cosine_sim_matrix.shape[1]))
 
 # Predict user ratings on test data set
 
@@ -107,7 +132,7 @@ for row in test_data.itertuples():
     pred = rec_predictor.predict_rating(row[1], row[2])
     test_data.set_value(row[0], 'predicted', pred)
 
-print 'Test dataset user-business rating predictions: %s ' % (len(test_data.index))
+logger.info('Test dataset user-business rating predictions: %s ' % (len(test_data.index)))
 
 # Compare result using RMSE
 def calculate_rmse(actual, prediction):
@@ -115,4 +140,4 @@ def calculate_rmse(actual, prediction):
 
 
 rmse = calculate_rmse(test_data['rating'], test_data['predicted'])
-print "RMSE on test dataset is: %s" % (rmse)
+logger.info("RMSE on test dataset is: %s" % (rmse))
