@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+from scipy.spatial.distance import cosine
 import logging
 
 # create logger
@@ -7,8 +8,8 @@ logger = logging.getLogger('recsys')
 logger.setLevel(logging.DEBUG)
 
 # create console handler and set level to debug
-# log_handler = logging.StreamHandler()
-log_handler = logging.FileHandler('/tmp/recsys.log', 'w')
+log_handler = logging.StreamHandler()
+# log_handler = logging.FileHandler('/tmp/recsys.log', 'w')
 log_handler.setLevel(logging.DEBUG)
 
 # create formatter
@@ -37,6 +38,8 @@ unique_train_user = train_data.user_id.unique()
 unique_test_user = test_data.user_id.unique()
 unique_compare_mask = np.in1d(unique_test_user, unique_train_user, invert=True)
 assert len(unique_test_user[unique_compare_mask]) == 0
+
+logger.info('Loaded %d training data' % (len(train_data)))
 
 '''
 From the output we know that all test data set users exists in the training data.
@@ -73,14 +76,15 @@ class RecommendationPredictor(object):
         sim_score_df = pd.DataFrame(index=mtrx.index, columns=mtrx.index)
 
         # Loop over the rows of each user to get their ratings
-        for uid in range(0, len(mtrx)):
+        for uid in range(0, (len(mtrx) -1)):
             logger.debug('calculating similarity for user %d' % (uid))
 
             # Get user ratings as dataframe
             u = mtrx.iloc[uid]
             others = mtrx.iloc[(uid + 1):len(mtrx)]
 
-            sim_serie = others.apply(lambda x: self.__cosine_sim(u.squeeze(), x.squeeze()), axis=1)
+            # sim_serie = others.apply(lambda x: self.__cosine_sim(u, x), axis=1)
+            sim_serie = others.apply(lambda x: 1-cosine(u.fillna(0.0), x.fillna(0.0)), axis=1)
 
             # Fill users row
             sim_score_df.ix[uid, :].loc[sim_serie.index] = sim_serie
