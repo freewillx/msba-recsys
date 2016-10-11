@@ -21,10 +21,10 @@ log_handler.setFormatter(formatter)
 logger.addHandler(log_handler)
 
 # Load data files
-# train_data_file = './data/toy_train.csv'
-# test_data_file = './data/toy_test.csv'
-train_data_file = './data/restaurant_train.csv'
-test_data_file = './data/restaurant_test.csv'
+train_data_file = './data/toy_train.csv'
+test_data_file = './data/toy_test.csv'
+#train_data_file = './data/restaurant_train.csv'
+#test_data_file = './data/restaurant_test.csv'
 
 train_data = pd.read_csv(train_data_file)
 train_data.columns = ['user_id', 'item_id', 'rating']
@@ -93,8 +93,6 @@ class RecommendationPredictor(object):
     # Define function to calculate similarities between all users using formula 2.5 from the text book
     def __calculate_user_sim_dict(self, mtrx):
 
-        top_neighbours = 2
-
         # sim_score_df = pd.DataFrame(index=mtrx.index, columns=mtrx.index)
         sim_score_dict = {}
 
@@ -115,8 +113,8 @@ class RecommendationPredictor(object):
 
                 sim_score = self.__cosine_sim_tuple(c_rattings, o_rattings)
 
-                self.__update_top_naighbours(c_uid, o_uid, sim_score, sim_score_dict, top_neighbours)
-                self.__update_top_naighbours(o_uid, c_uid, sim_score, sim_score_dict, top_neighbours)
+                self.__update_top_naighbours(c_uid, o_uid, sim_score, sim_score_dict)
+                self.__update_top_naighbours(o_uid, c_uid, sim_score, sim_score_dict)
 
         return sim_score_dict
 
