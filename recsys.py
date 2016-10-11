@@ -1,6 +1,5 @@
 import numpy as np
 import pandas as pd
-from scipy.spatial.distance import cosine
 import logging
 
 # create logger
@@ -8,8 +7,8 @@ logger = logging.getLogger('recsys')
 logger.setLevel(logging.DEBUG)
 
 # create console handler and set level to debug
-log_handler = logging.StreamHandler()
-# log_handler = logging.FileHandler('/tmp/recsys.log', 'w')
+# log_handler = logging.StreamHandler()
+log_handler = logging.FileHandler('/tmp/recsys.log', 'w')
 log_handler.setLevel(logging.DEBUG)
 
 # create formatter
@@ -22,10 +21,10 @@ log_handler.setFormatter(formatter)
 logger.addHandler(log_handler)
 
 # Load data files
-train_data_file = './data/toy_train.csv'
-test_data_file = './data/toy_test.csv'
-# train_data_file = './data/restaurant_train.csv'
-# test_data_file = './data/restaurant_test.csv'
+# train_data_file = './data/toy_train.csv'
+# test_data_file = './data/toy_test.csv'
+train_data_file = './data/restaurant_train.csv'
+test_data_file = './data/restaurant_test.csv'
 
 train_data = pd.read_csv(train_data_file)
 train_data.columns = ['user_id', 'item_id', 'rating']
@@ -50,7 +49,8 @@ and we calculate the prediction with test data
 # Create rating matrix from training data
 training_data_matrix = train_data.pivot_table(values='rating', index='user_id', columns='item_id')
 assert training_data_matrix.shape == (len(train_data.user_id.unique()), len(train_data.item_id.unique()))
-logger.info('Training data matrix shape: %s users X %s businesses' % (training_data_matrix.shape[0], training_data_matrix.shape[1]))
+logger.info('Training data matrix shape: %s users X %s businesses' % (
+    training_data_matrix.shape[0], training_data_matrix.shape[1]))
 
 
 # Create a recommendation predictor object to predict user ratings
@@ -66,23 +66,7 @@ class RecommendationPredictor(object):
         return np.sum(u1_rating * u2_rating) / np.sqrt(u1_rating_sqrt_sum * u2_rating_sqrt_sum)
 
     @staticmethod
-    def __cosine_sim(u1_rating, u2_rating):
-        u1_rating_sqrt_sum = np.sum(u1_rating.apply(lambda x: x ** 2))
-        u2_rating_sqrt_sum = np.sum(u2_rating.apply(lambda x: x ** 2))
-        return np.sum(u1_rating * u2_rating) / np.sqrt(u1_rating_sqrt_sum * u2_rating_sqrt_sum)
-
-    def __init__(self, train_matrix):
-        self.train_matrix = train_matrix
-
-        # Calculate average rating for all users
-        self.user_mean_ratings = pd.DataFrame(data=train_matrix.mean(axis=1), index=train_matrix.index)
-
-        # Calculate similarities between all
-        self.similarity_dict = self.__calculate_user_sim_dict(training_data_matrix)
-        self.similarity_matrix = self.__calculate_user_sim_matrix(train_matrix)
-
-    @staticmethod
-    def __update_top_naighbours(c_uid, o_uid, sim_score, sim_score_dict, top_n = 40):
+    def __update_top_naighbours(c_uid, o_uid, sim_score, sim_score_dict, top_n=40):
         if not sim_score_dict.has_key(c_uid):
             sim_score_dict[c_uid] = {o_uid: sim_score}
         else:
@@ -97,8 +81,16 @@ class RecommendationPredictor(object):
                     rattings[o_uid] = sim_score
                     sim_score_dict[c_uid] = rattings
 
+    def __init__(self, train_matrix):
+        self.train_matrix = train_matrix
 
+        # Calculate average rating for all users
+        self.user_mean_ratings = pd.DataFrame(data=train_matrix.mean(axis=1), index=train_matrix.index)
 
+        # Calculate similarities between all
+        self.similarity_dict = self.__calculate_user_sim_dict(training_data_matrix)
+
+    # Define function to calculate similarities between all users using formula 2.5 from the text book
     def __calculate_user_sim_dict(self, mtrx):
 
         top_neighbours = 2
@@ -128,29 +120,6 @@ class RecommendationPredictor(object):
 
         return sim_score_dict
 
-    # Define function to calculate similarities between all users using formula 2.5 from the text book
-    def __calculate_user_sim_matrix(self, mtrx):
-        sim_score_df = pd.DataFrame(index=mtrx.index, columns=mtrx.index)
-
-        # Loop over the rows of each user to get their ratings
-        for uid in range(0, (len(mtrx) -1)):
-            logger.debug('calculating similarity for user %d' % (uid))
-
-            # Get user ratings as dataframe
-            u = mtrx.iloc[uid]
-            others = mtrx.iloc[(uid + 1):len(mtrx)]
-
-            # sim_serie = others.apply(lambda x: self.__cosine_sim(u, x), axis=1)
-            sim_serie = others.apply(lambda x: 1-cosine(u.fillna(0.0), x.fillna(0.0)), axis=1)
-
-            # Fill users row
-            sim_score_df.ix[uid, :].loc[sim_serie.index] = sim_serie
-
-            # Fill users column
-            sim_score_df.ix[:, uid].loc[sim_serie.index] = sim_serie
-
-        return sim_score_df
-
     # Define prediction function using formula 2.3 from the text book
     def predict_rating_dict(self, user_name, item_name):
         try:
@@ -172,36 +141,6 @@ class RecommendationPredictor(object):
             neighbors['product_rating'] = neighbors['product_rating'].fillna(neighbors['avg_rating'])
 
             # Calculate prediction with formula 2.3
-            n_nominator = (neighbors['sim_score'] * (neighbors['product_rating'] - neighbors['avg_rating'])).sum(skipna=True)
-
-            pred_rating = u_avg_rate + n_nominator / (neighbors['sim_score']).sum(skipna=True)
-
-            return pred_rating
-
-        except KeyError as e:
-            print e.message
-            raise
-
-
-
-    # Define prediction function using formula 2.3 from the text book
-    def predict_rating(self, user_name, item_name):
-        try:
-            # Get the user's average ratings
-            u_avg_rate = self.user_mean_ratings.ix[user_name]
-
-            # Get the user's 40 nearest neighbors from the similarity_matrix
-            # Excluding oneself
-            neighbors = self.similarity_matrix.ix[user_name].order(ascending=False)[1:41]
-            neighbors = neighbors.to_frame(name='sim_score')
-
-            # Get average ratings of all the neighbors
-            neighbors['avg_rating'] = self.user_mean_ratings.ix[neighbors.index]
-
-            # Get ratings of all the neighbors on the specific item for prediction
-            neighbors['product_rating'] = self.train_matrix.ix[neighbors.index, item_name]
-
-            # Calculate prediction with formula 2.3
             n_nominator = (neighbors['sim_score'] * (neighbors['product_rating'] - neighbors['avg_rating'])).sum(
                 skipna=True)
 
@@ -219,28 +158,20 @@ class RecommendationPredictor(object):
     def get_similarity_dict(self):
         return self.similarity_dict
 
-    def get_similarity_matrix(self):
-        return self.similarity_matrix
-
 
 rec_predictor = RecommendationPredictor(training_data_matrix)
-cosine_sim_matrix = rec_predictor.get_similarity_matrix()
 cosine_sim_dict = rec_predictor.get_similarity_dict()
-logger.info(
-    'Calculated user similarity matrix shape: %s X %s users' % (cosine_sim_matrix.shape[0], cosine_sim_matrix.shape[1]))
+logger.info('Calculated similarity for %d users' % (len(cosine_sim_dict)))
 
 # Predict user ratings on test data set
 
 # Create a new column in the test dataframe for predicted value
-test_data['predicted_mtrx'] = np.nan
 test_data['predicted'] = np.nan
 
 logger.info("Calculating prediction for %d test data" % len(test_data))
 for row in test_data.itertuples():
     pred = rec_predictor.predict_rating_dict(row[1], row[2])
-    pred_mtrx = rec_predictor.predict_rating(row[1], row[2])
     test_data.set_value(row[0], 'predicted', pred)
-    test_data.set_value(row[0], 'predicted_mtrx', pred_mtrx)
 
 logger.info('Calculating RMSE for user-business rating predictions: %s ' % (len(test_data.index)))
 # Compare result using RMSE
@@ -249,6 +180,4 @@ def calculate_rmse(actual, prediction):
 
 
 rmse = calculate_rmse(test_data['rating'], test_data['predicted'])
-logger.info("RMSE on test dataset is: %s" % rmse)
-rmse = calculate_rmse(test_data['rating'], test_data['predicted_mtrx'])
 logger.info("RMSE on test dataset is: %s" % rmse)
