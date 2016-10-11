@@ -7,7 +7,7 @@ logger = logging.getLogger('recsys')
 logger.setLevel(logging.DEBUG)
 
 # create console handler and set level to debug
-#log_handler = logging.StreamHandler()
+# log_handler = logging.StreamHandler()
 log_handler = logging.FileHandler('/tmp/recsys.log', 'w')
 log_handler.setLevel(logging.DEBUG)
 
@@ -70,18 +70,25 @@ class RecommendationPredictor(object):
 
     # Define function to calculate similarities between all users using formula 2.5 from the text book
     def __calculate_user_sim_matrix(self, mtrx):
-        mtrx_df = pd.DataFrame()
+        sim_score_df = pd.DataFrame(index=mtrx.index, columns=mtrx.index)
 
         # Loop over the rows of each user to get their ratings
         for uid in range(0, len(mtrx)):
-            logger.info('calculating similarity for user number %d' % (uid))
+            logger.debug('calculating similarity for user %d' % (uid))
 
             # Get user ratings as dataframe
-            u = mtrx[mtrx.index == mtrx.index[uid]].squeeze()
+            u = mtrx.iloc[uid]
+            others = mtrx.iloc[(uid + 1):len(mtrx)]
 
-            sim_serie = mtrx.apply(lambda x: self.__cosine_sim(u, x.squeeze()), axis=1)
-            mtrx_df[u.name] = sim_serie
-        return mtrx_df
+            sim_serie = others.apply(lambda x: self.__cosine_sim(u.squeeze(), x.squeeze()), axis=1)
+
+            # Fill users row
+            sim_score_df.ix[uid, :].loc[sim_serie.index] = sim_serie
+
+            # Fill users column
+            sim_score_df.ix[:, uid].loc[sim_serie.index] = sim_serie
+
+        return sim_score_df
 
     # Define prediction function using formula 2.3 from the text book
     def predict_rating(self, user_name, item_name):
@@ -121,23 +128,24 @@ class RecommendationPredictor(object):
 
 rec_predictor = RecommendationPredictor(training_data_matrix)
 cosine_sim_matrix = rec_predictor.get_similarity_matrix()
-logger.info('Calculated user similarity matrix shape: %s X %s users' % (cosine_sim_matrix.shape[0], cosine_sim_matrix.shape[1]))
+logger.info(
+    'Calculated user similarity matrix shape: %s X %s users' % (cosine_sim_matrix.shape[0], cosine_sim_matrix.shape[1]))
 
 # Predict user ratings on test data set
 
 # Create a new column in the test dataframe for predicted value
 test_data['predicted'] = np.nan
 
+logger.info("Calculating prediction for %d test data" % len(test_data))
 for row in test_data.itertuples():
     pred = rec_predictor.predict_rating(row[1], row[2])
     test_data.set_value(row[0], 'predicted', pred)
 
-logger.info('Test dataset user-business rating predictions: %s ' % (len(test_data.index)))
-
+logger.info('Calculating RMSE for user-business rating predictions: %s ' % (len(test_data.index)))
 # Compare result using RMSE
 def calculate_rmse(actual, prediction):
     return np.sqrt(((prediction - actual) ** 2).mean())
 
 
 rmse = calculate_rmse(test_data['rating'], test_data['predicted'])
-logger.info("RMSE on test dataset is: %s" % (rmse))
+logger.info("RMSE on test dataset is: %s" % rmse)
