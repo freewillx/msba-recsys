@@ -21,6 +21,8 @@ log_handler.setFormatter(formatter)
 logger.addHandler(log_handler)
 
 # Load data files
+# train_data_file = './data/Tiny_training.csv'
+# test_data_file = './data/Tiny_test.csv'
 train_data_file = './data/toy_train.csv'
 test_data_file = './data/toy_test.csv'
 #train_data_file = './data/restaurant_train.csv'
@@ -32,16 +34,9 @@ train_data.columns = ['user_id', 'item_id', 'rating']
 test_data = pd.read_csv(test_data_file)
 test_data.columns = ['user_id', 'item_id', 'rating']
 
-# Compare training data users and test data users and determine if any test users are not in the training data set
-unique_train_user = train_data.user_id.unique()
-unique_test_user = test_data.user_id.unique()
-unique_compare_mask = np.in1d(unique_test_user, unique_train_user, invert=True)
-assert len(unique_test_user[unique_compare_mask]) == 0
-
 logger.info('Loaded %d training data' % (len(train_data)))
 
 '''
-From the output we know that all test data set users exists in the training data.
 To optimize the computation, we will first find the 40 nearest neighbours for each user using the training data set
 and we calculate the prediction with test data
 '''
@@ -135,8 +130,8 @@ class RecommendationPredictor(object):
             # Get ratings of all the neighbors on the specific item for prediction
             neighbors['product_rating'] = self.train_matrix.ix[neighbors.index, item_name]
 
-            # neutralize NAN ratings by setting the default rating to the average rating
-            neighbors['product_rating'] = neighbors['product_rating'].fillna(neighbors['avg_rating'])
+            # Skip user who didn't rate the same service with the ratings of NaN
+            neighbors = neighbors.dropna()
 
             # Calculate prediction with formula 2.3
             n_nominator = (neighbors['sim_score'] * (neighbors['product_rating'] - neighbors['avg_rating'])).sum(
