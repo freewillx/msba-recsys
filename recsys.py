@@ -90,6 +90,7 @@ def calculate_predicted_rating(training_matrix, neighbor_scores, user_id, item_i
 
     return predicted_rating
 
+
 def predict_new_ratings(new_data, train_matrix):
 
     ''' Calculate Rating Predictions from the test set '''
@@ -113,6 +114,7 @@ def predict_new_ratings(new_data, train_matrix):
 
     return prediction
 
+
 # Compare result using RMSE
 def calculate_rmse(actual, prediction):
     return np.sqrt(((prediction - actual) ** 2).mean())
@@ -121,21 +123,27 @@ def calculate_rmse(actual, prediction):
 # Compare result using F-measure
 def calculate_f_measure(actual, prediction, data_labels):
 
-    """
-    By definition a confusion matrix C is such that C{i, j} is equal to the number of observations known to be in group i but predicted to be in group j.
-    Thus in binary classification, the count of true negatives is C{0,0}, false negatives is C{1,0}, true positives is C{1,1} and false positives is C{0,1}.
-    """
-    cf_matrix = confusion_matrix(actual, prediction, data_labels)
+    try:
+        """
+        By definition a confusion matrix C is such that C{i, j} is equal to the number of observations known to be in group i but predicted to be in group j.
+        Thus in binary classification, the count of true negatives is C{0,0}, false negatives is C{1,0}, true positives is C{1,1} and false positives is C{0,1}.
+        """
+        cf_matrix = confusion_matrix(actual, prediction, data_labels)
 
-    tp = cf_matrix[0, 0]
-    fp = cf_matrix[1, 0]
-    fn = cf_matrix[0, 1]
-    tn = cf_matrix[1, 1]
+        tp = cf_matrix[0, 0]
+        fp = cf_matrix[1, 0]
+        fn = cf_matrix[0, 1]
 
-    precision = float(tp) / (tp + fp)
-    recall = float(tp) / (tp + fn)
-    f_measure = 2 * (precision * recall) / (precision + recall)
-    return f_measure
+        precision = float(tp) / (tp + fp)
+        recall = float(tp) / (tp + fn)
+
+        f_measure = 0
+        if ((precision + recall) != 0):
+            f_measure = 2 * (precision * recall) / (precision + recall)
+        return f_measure
+
+    except Exception as e:
+        print(e)
 
 
 """Load data files"""
@@ -162,12 +170,13 @@ logger.info('Loaded %d valid data' % (len(rating_data)))
 
 
 """
-User Based Collective Filtering with 10 folds cross validations - average f_measure 0.428707
+User Based Collective Filtering with 10 folds cross validations
+UBCF average f_measure 0.423870
 """
 kf = KFold(n_splits=10, shuffle=True)
 kfg = kf.split(list(rating_data.index))
 
-f_measure_list = []
+ubcf_f_measures = []
 for train_data, test_data in kfg:
 
     train_data = rating_data.loc[rating_data.index[train_data]]
@@ -179,38 +188,100 @@ for train_data, test_data in kfg:
     logger.info('UBCF 10 fold cross validation with %d training data and %d testing data' % (len(train_data), len(test_data)))
     prediction = predict_new_ratings(test_data, train_rating_matrix)
 
-    f_measure_list.append(calculate_f_measure(prediction['grade'], prediction['predict_grade'], ['Good', 'Bad']))
+    ubcf_f_measures.append(calculate_f_measure(prediction['grade'], prediction['predict_grade'], ['Good', 'Bad']))
 
-logger.info('UBCF average f_measure %f' % (np.mean(f_measure_list)))
+logger.info('UBCF average f_measure %f' % (np.mean(ubcf_f_measures)))
 
-'''
+
+"""
 Exact Pre-filtering (EPF) method with conditions (Saturday night, Friends, Movie Theater)
 with_whom=1
 day_of_wk=1
 venue=1
 Filter is too restrictive, no predictions can be generated
-'''
-epf_rating_data = rating_data[rating_data['with_whom'] == 1]
-epf_rating_data = epf_rating_data[epf_rating_data['day_of_wk'] == 1]
-epf_rating_data = epf_rating_data[epf_rating_data['venue'] == 1]
+"""
+epf_rating_data = rating_data[(rating_data['with_whom'] == 1) & (rating_data['day_of_wk'] == 1) & (rating_data['venue'] == 1)]
+logger.info('Exact Pre-filtering data size: %d' % (len(epf_rating_data)))
 
 kfg = kf.split(list(epf_rating_data.index))
-
-f_measure_list = []
+epf_f_measures = []
 for train_data, test_data in kfg:
 
-    train_data = rating_data.loc[rating_data.index[train_data]]
+    train_data = epf_rating_data.loc[epf_rating_data.index[train_data]]
     # Create rating sparse matrix from rating data
     train_rating_matrix = train_data.pivot_table(values='rating', index='user_id', columns='imdb_id')
 
-    test_data = rating_data.loc[rating_data.index[test_data]]
+    test_data = epf_rating_data.loc[epf_rating_data.index[test_data]]
 
     logger.info('EPF 10 fold cross validation with %d training data and %d testing data' % (len(train_data), len(test_data)))
     prediction = predict_new_ratings(test_data, train_rating_matrix)
     if (prediction is not None):
-        f_measure_list.append(calculate_f_measure(prediction['grade'], prediction['predict_grade'], ['Good', 'Bad']))
+        epf_f_measures.append(calculate_f_measure(prediction['grade'], prediction['predict_grade'], ['Good', 'Bad']))
 
-logger.info('EPF average f_measure list size: %d' % (len(f_measure_list)))
+logger.info('EPF average f_measure list size: %d' % (len(epf_f_measures)))
 
-train_rating_matrix = epf_rating_data.pivot_table(values='rating', index='user_id', columns='imdb_id')
-logger.info('EPF too restrictive, no item is rated by more than one user, no neighbors can be found:\n %s' % (train_rating_matrix))
+epf_rating_matrix = epf_rating_data.pivot_table(values='rating', index='user_id', columns='imdb_id')
+logger.info('EPF too restrictive, no item is rated by more than one user, no neighbors can be found:\n %s' % (epf_rating_matrix))
+
+
+"""
+Generalized Pre-Filtering (GPF) method with contexts of (Weekend, Movie Theater) and (Movie Theater, Friends)
+"""
+
+"""
+Context 1:
+day_of_wk=1
+venue=1
+GPF context 1 average f_measure 0.561029
+"""
+gpf_ctx1_data = rating_data[(rating_data['day_of_wk'] == 1) & (rating_data['venue'] == 1)]
+logger.info('Generalized Pre-Filtering Context 1 data size: %d' % (len(gpf_ctx1_data)))
+
+kfg_1 = kf.split(list(gpf_ctx1_data.index))
+gpf_ctx1_f_measures = []
+for train_data, test_data in kfg_1:
+
+    train_data = gpf_ctx1_data.loc[gpf_ctx1_data.index[train_data]]
+    # Create rating sparse matrix from rating data
+    train_rating_matrix = train_data.pivot_table(values='rating', index='user_id', columns='imdb_id')
+
+    test_data = gpf_ctx1_data.loc[gpf_ctx1_data.index[test_data]]
+
+    logger.info('GPF Ctx1 10 fold cross validation with %d training data and %d testing data' % (len(train_data), len(test_data)))
+    prediction = predict_new_ratings(test_data, train_rating_matrix)
+
+    if (prediction is not None):
+        gpf_ctx1_f_measures.append(calculate_f_measure(prediction['grade'], prediction['predict_grade'], ['Good', 'Bad']))
+
+logger.info('GPF context 1 average f_measure list size: %d' % (len(gpf_ctx1_f_measures)))
+logger.info('GPF context 1 average f_measure %f' % (np.mean(gpf_ctx1_f_measures)))
+
+"""
+Context 2:
+with_whom=1
+venue=1
+Filter is too restrictive, no predictions can be generated
+"""
+gpf_ctx2_data = rating_data[(rating_data['with_whom'] == 1) & (rating_data['venue'] == 1)]
+logger.info('Generalized Pre-Filtering Context 2 data size: %d' % (len(gpf_ctx2_data)))
+
+kfg_2 = kf.split(list(gpf_ctx2_data.index))
+gpf_ctx2_f_measures = []
+for train_data, test_data in kfg_2:
+
+    train_data = gpf_ctx2_data.loc[gpf_ctx2_data.index[train_data]]
+    # Create rating sparse matrix from rating data
+    train_rating_matrix = train_data.pivot_table(values='rating', index='user_id', columns='imdb_id')
+
+    test_data = gpf_ctx2_data.loc[gpf_ctx2_data.index[test_data]]
+
+    logger.info('GPF Ctx2 fold cross validation with %d training data and %d testing data' % (len(train_data), len(test_data)))
+    prediction = predict_new_ratings(test_data, train_rating_matrix)
+
+    if (prediction is not None):
+        gpf_ctx2_f_measures.append(calculate_f_measure(prediction['grade'], prediction['predict_grade'], ['Good', 'Bad']))
+
+logger.info('GPF context 2 average f_measure list size: %d' % (len(gpf_ctx2_f_measures)))
+
+gpf2_rating_matrix = gpf_ctx2_data.pivot_table(values='rating', index='user_id', columns='imdb_id')
+logger.info('GPF context 2 too restrictive, no item is rated by more than one user, no neighbors can be found:\n %s' % (gpf2_rating_matrix))
