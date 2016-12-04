@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 import logging
-from sklearn.model_selection import KFold
+from sklearn.decomposition import NMF
 from sklearn.metrics import confusion_matrix
 
 """Create logger"""
@@ -20,7 +20,7 @@ log_handler.setFormatter(formatter)
 logger.addHandler(log_handler)
 
 
-"""Define Functions"""
+"""Define Collaborative Filtering Functions"""
 # Calculate cosine similarity
 def cosine_sim(u1_rating_np_array, u2_rating_np_array):
     u1_rating = np.nan_to_num(u1_rating_np_array)
@@ -32,7 +32,7 @@ def cosine_sim(u1_rating_np_array, u2_rating_np_array):
 
 # Find the N nearest neighbors for a specific user from the training data
 # For higher performance, rated_item_filter can be used to exclude neighbors who did not rated the same item
-def rated_neighbors_sim_score(train_matrix, user_id, rated_item, n=3):
+def rated_neighbors_sim_score(train_matrix, user_id, rated_item, n=40):
 
     # Filter training matrix to only find test user in training set and neighbors rated the item
     if (rated_item == None or rated_item not in train_matrix.columns or user_id not in train_matrix.index):
@@ -42,6 +42,7 @@ def rated_neighbors_sim_score(train_matrix, user_id, rated_item, n=3):
         # Convert list to NumPy array
         user_ratings = np.asarray(user_ratings)
 
+        # Only consider the users who have rated the item
         train_matrix = train_matrix.loc[train_matrix[rated_item].notnull()]
 
         neighbor_list = list(train_matrix.iterrows())
@@ -78,7 +79,7 @@ def rated_neighbors_sim_score(train_matrix, user_id, rated_item, n=3):
 
 
 # Function for calculate the rating prediction based on calculated neighbor similarity scores
-def calculate_predicted_rating(training_matrix, neighbor_scores, user_id, item_id):
+def calculate_cf_rating_score(training_matrix, neighbor_scores, user_id, item_id):
     # Calculate user's average rating
     user_ratings = training_matrix.loc[user_id]
     user_avg_rating = np.nanmean(user_ratings)
@@ -91,30 +92,74 @@ def calculate_predicted_rating(training_matrix, neighbor_scores, user_id, item_i
     return predicted_rating
 
 
-def predict_new_ratings(new_data, train_matrix):
+# Calculate Rating Predictions from the test set
+def predict_new_cf_ratings(new_data, train_matrix):
 
-    ''' Calculate Rating Predictions from the test set '''
     # Create a new dataframe to store predicted value
-    prediction = pd.DataFrame(new_data[['user_id', 'rating']])
-    prediction['predict_rating'] = None
+    preds = pd.DataFrame(new_data[['user_id', 'business_id', 'rating']])
+    preds['predict_rating'] = None
     for row in new_data.itertuples():
-        neighbor_scores = rated_neighbors_sim_score(train_matrix, row[1], row[2], n=3)
+        # Use 40 neighbours for rating predictions
+        neighbor_scores = rated_neighbors_sim_score(train_matrix, row[1], row[2], n=40)
         if (neighbor_scores is not None):
-            pred = calculate_predicted_rating(train_matrix, neighbor_scores, row[1], row[2])
-            prediction.set_value(row[0], 'predict_rating', pred)
+            pred = calculate_cf_rating_score(train_matrix, neighbor_scores, row[1], row[2])
+            preds.set_value(row[0], 'predict_rating', pred)
 
     # Remove entries that are unable to produce prediction
-    prediction = prediction[prediction['predict_rating'].notnull()]
+    preds = preds[preds['predict_rating'].notnull()]
 
-    if(len(prediction) >0):
-        prediction['grade'] = prediction.apply(lambda r: 'Good' if r['rating'] >= 11 else 'Bad', axis=1)
-        prediction['predict_grade'] = prediction.apply(lambda r: 'Good' if r['predict_rating'] >= 11 else 'Bad', axis=1)
-    else:
-        prediction = None
+    if len(preds) == 0:
+        preds = None
 
-    return prediction
+    return preds
 
 
+"""Define Matrix Factorization Functions"""
+# Calculate Rating Predictions from the test set
+def predict_new_mf_ratings(new_data, train_matrix, n_features, reg=0):
+
+    # Create a new dataframe to store predicted value
+    pred_df = pd.DataFrame(new_data[['user_id', 'business_id', 'rating']])
+    pred_df['predict_rating'] = None
+
+    for row in new_data.itertuples():
+
+        logger.debug('Processing entry %d' % (row[0]))
+        uid = row[1]
+        bid = row[2]
+
+        try:
+            # Find users who have also rated this business
+            rate_matrix = train_matrix.loc[train_matrix[bid].notnull()]
+
+            # If the predicting user is not in the list, add to decomposing matrix
+            if uid not in rate_matrix.index:
+                rate_matrix = rate_matrix.append(train_rating_matrix.loc[uid])
+
+            # Number of users in the decomposing matrix should be smaller than the number of features
+            if (n_features > rate_matrix.shape[0]):
+                n_features = rate_matrix.shape[0]
+
+            # Matrix factorization with given NMF model
+            model = NMF(init='random', n_components=n_features, alpha=reg, random_state=3, max_iter=500)
+            user_feature_mtrx = model.fit_transform(rate_matrix.to_sparse(fill_value=0))
+            item_feature_mtrx = model.components_
+
+            # Compute prediction matrix
+            pred_matrix = np.dot(user_feature_mtrx, item_feature_mtrx)
+            pred_matrix = pd.DataFrame(pred_matrix, index=rate_matrix.index, columns=rate_matrix.columns)
+
+            pred = pred_matrix.loc[uid][bid]
+
+        except KeyError:
+            pred = None
+
+        pred_df.set_value(row[0], 'predict_rating', pred)
+
+    return pred_df
+
+
+"""Define Error Estimation Functions"""
 # Compare result using RMSE
 def calculate_rmse(actual, prediction):
     return np.sqrt(((prediction - actual) ** 2).mean())
@@ -147,141 +192,97 @@ def calculate_f_measure(actual, prediction, data_labels):
 
 
 """Load data files"""
-rating_data_file = './data/Ratings.csv'
-rating_data = pd.read_csv(rating_data_file)
-logger.info('Loaded %d raw data' % (len(rating_data)))
+train_data_file = './data/assignment7-train.csv'
+train_data = pd.read_csv(train_data_file)
+train_data.columns= ['user_id', 'business_id', 'rating']
+logger.info('Loaded %d raw data' % (len(train_data)))
+
+test_data_file = './data/assignment7-test.csv'
+test_data = pd.read_csv(test_data_file)
+test_data.columns= ['user_id', 'business_id', 'rating']
+logger.info('Loaded %d raw data' % (len(test_data)))
+
+# Create rating sparse matrix from rating data
+train_rating_matrix = train_data.pivot_table(values='rating', index='user_id', columns='business_id')
+
+"""Calculate prediction with CF method - RMSE using CF method: 0.908192"""
+cf_predictions = predict_new_cf_ratings(test_data, train_rating_matrix)
+
+logger.info('Calculated %d predictions using CF method' % (len(cf_predictions)))
+
+cf_rmse = calculate_rmse(cf_predictions['rating'], cf_predictions['predict_rating'])
+logger.info('Calculated RMSE using CF method: %f ' % (cf_rmse))
+
+
+"""Calculate prediction with MF method"""
+# Select the number of latent features = 50
+# Regularization coefficient 0.02
+
 
 '''
-  user_id: User ID
-  imdb_id: Movie ID
-  rating: Movie Rating (scale: 1 - 13)
-  with_whom: Friends - 1, Parents - 2, Girlfriend/Boyfriend - 3, Alone - 4, Siblings - 5, Spouse - 6, Children - 7, Colleagues - 8
-  day_of_wk: Dayofweek, Weekend - 1, Weekday - 2, Don't remember - 3
-  venue : Movie Venue, Theater - 1, Home - 2
+Grid Search - regularization coefficient 0.0001 ~ 0.05, number of features 2~20
+Determined the best number of features 0.0002, 2 features with RMSE of 2.219413
+
+
+rmse_dict = {}
+for reg in range(0,7):
+    reg_coefficent = float(reg)*0.0001
+    logger.info('Computing RMSE with Alpha %f' % (reg_coefficent))
+    feature_dict = {}
+    for n in range(2,5):
+        mf_predictions = predict_new_mf_ratings(test_data, train_rating_matrix, n_features = n, reg=reg_coefficent)
+        mf_rmse = calculate_rmse(mf_predictions['rating'], mf_predictions['predict_rating'])
+        feature_dict[n] = mf_rmse
+    rmse_dict[reg_coefficent] = feature_dict
+
+min_alpha = 100;
+min_n = 100
+min_rmse = 100
+for reg in rmse_dict:
+    feature_dict = rmse_dict[reg]
+    for f in feature_dict:
+        if min_rmse > feature_dict[f]:
+            min_alpha = reg
+            min_n = f
+            min_rmse = feature_dict[f]
+        logger.info('Alpha %f RMSE for %d features is %f' % (reg, f, feature_dict[f]))
+
 '''
-rating_data.columns = ['user_id', 'imdb_id', 'rating', 'with_whom', 'day_of_wk', 'venue']
 
-# Data validations
-rating_data = rating_data[(rating_data['rating'] >= 1) & (rating_data['rating'] <= 13)]
-rating_data = rating_data[(rating_data['with_whom'] >= 1) & (rating_data['with_whom'] <= 8)]
-rating_data = rating_data[(rating_data['day_of_wk'] >= 1) & (rating_data['day_of_wk'] <= 3)]
-rating_data = rating_data[(rating_data['venue'] >= 1) & (rating_data['venue'] <= 2)]
-logger.info('Loaded %d valid data' % (len(rating_data)))
+mf_predictions = predict_new_mf_ratings(test_data, train_rating_matrix, n_features = 2, reg=0.0002)
+mf_rmse = calculate_rmse(mf_predictions['rating'], mf_predictions['predict_rating'])
+logger.info('Calculated RMSE using MF method: %f ' % (mf_rmse))
 
+'''
+Apply ensemble method to combine CF ratings and MF ratings with blending ratings
+'''
+# Ensemble with weighted average
+cf_predictions=cf_predictions.rename(columns = {'predict_rating':'cf_predict_rating'})
+mf_predictions=mf_predictions.rename(columns = {'predict_rating':'mf_predict_rating'})
 
-"""
-User Based Collective Filtering with 10 folds cross validations
-UBCF average f_measure 0.423870
-"""
-kf = KFold(n_splits=10, shuffle=True)
-kfg = kf.split(list(rating_data.index))
+logger.info('Number of predicted rating with CF method: %f ' % (len(cf_predictions)))
+logger.info('Number of predicted rating with MF method: %f ' % (len(mf_predictions)))
+cf_predictions.head(10)
+mf_predictions.head(10)
 
-ubcf_f_measures = []
-for train_data, test_data in kfg:
-
-    train_data = rating_data.loc[rating_data.index[train_data]]
-    # Create rating sparse matrix from rating data
-    train_rating_matrix = train_data.pivot_table(values='rating', index='user_id', columns='imdb_id')
-
-    test_data = rating_data.loc[rating_data.index[test_data]]
-
-    logger.info('UBCF 10 fold cross validation with %d training data and %d testing data' % (len(train_data), len(test_data)))
-    prediction = predict_new_ratings(test_data, train_rating_matrix)
-
-    ubcf_f_measures.append(calculate_f_measure(prediction['grade'], prediction['predict_grade'], ['Good', 'Bad']))
-
-logger.info('UBCF average f_measure %f' % (np.mean(ubcf_f_measures)))
+ensemble_result = pd.merge(cf_predictions, mf_predictions, how='outer', on=['user_id', 'business_id', 'rating'])
+ensemble_result.head(10)
 
 
-"""
-Exact Pre-filtering (EPF) method with conditions (Saturday night, Friends, Movie Theater)
-with_whom=1
-day_of_wk=1
-venue=1
-Filter is too restrictive, no predictions can be generated
-"""
-epf_rating_data = rating_data[(rating_data['with_whom'] == 1) & (rating_data['day_of_wk'] == 1) & (rating_data['venue'] == 1)]
-logger.info('Exact Pre-filtering data size: %d' % (len(epf_rating_data)))
+# Grid search to find the best alpha to combine CF and MF with
+ensemble_predict_df = pd.DataFrame(ensemble_result[['user_id', 'business_id', 'rating']])
 
-kfg = kf.split(list(epf_rating_data.index))
-epf_f_measures = []
-for train_data, test_data in kfg:
+for i in range(0,11):
+    alpha = i * 0.1
+    logger.info('Test alpha %f ' % (alpha))
 
-    train_data = epf_rating_data.loc[epf_rating_data.index[train_data]]
-    # Create rating sparse matrix from rating data
-    train_rating_matrix = train_data.pivot_table(values='rating', index='user_id', columns='imdb_id')
+    ensemble_predict_df['ensemble_rating'] = (ensemble_result['cf_predict_rating'] * alpha) + (ensemble_result['mf_predict_rating'] * (1-alpha))
 
-    test_data = epf_rating_data.loc[epf_rating_data.index[test_data]]
+    ensemble_rmse = calculate_rmse(ensemble_predict_df['rating'], ensemble_predict_df['ensemble_rating'])
+    logger.info('Calculated RMSE using Ensemble method: %f ' % (ensemble_rmse))
 
-    logger.info('EPF 10 fold cross validation with %d training data and %d testing data' % (len(train_data), len(test_data)))
-    prediction = predict_new_ratings(test_data, train_rating_matrix)
-    if (prediction is not None):
-        epf_f_measures.append(calculate_f_measure(prediction['grade'], prediction['predict_grade'], ['Good', 'Bad']))
-
-logger.info('EPF average f_measure list size: %d' % (len(epf_f_measures)))
-
-epf_rating_matrix = epf_rating_data.pivot_table(values='rating', index='user_id', columns='imdb_id')
-logger.info('EPF too restrictive, no item is rated by more than one user, no neighbors can be found:\n %s' % (epf_rating_matrix))
-
-
-"""
-Generalized Pre-Filtering (GPF) method with contexts of (Weekend, Movie Theater) and (Movie Theater, Friends)
-"""
-
-"""
-Context 1:
-day_of_wk=1
-venue=1
-GPF context 1 average f_measure 0.561029
-"""
-gpf_ctx1_data = rating_data[(rating_data['day_of_wk'] == 1) & (rating_data['venue'] == 1)]
-logger.info('Generalized Pre-Filtering Context 1 data size: %d' % (len(gpf_ctx1_data)))
-
-kfg_1 = kf.split(list(gpf_ctx1_data.index))
-gpf_ctx1_f_measures = []
-for train_data, test_data in kfg_1:
-
-    train_data = gpf_ctx1_data.loc[gpf_ctx1_data.index[train_data]]
-    # Create rating sparse matrix from rating data
-    train_rating_matrix = train_data.pivot_table(values='rating', index='user_id', columns='imdb_id')
-
-    test_data = gpf_ctx1_data.loc[gpf_ctx1_data.index[test_data]]
-
-    logger.info('GPF Ctx1 10 fold cross validation with %d training data and %d testing data' % (len(train_data), len(test_data)))
-    prediction = predict_new_ratings(test_data, train_rating_matrix)
-
-    if (prediction is not None):
-        gpf_ctx1_f_measures.append(calculate_f_measure(prediction['grade'], prediction['predict_grade'], ['Good', 'Bad']))
-
-logger.info('GPF context 1 average f_measure list size: %d' % (len(gpf_ctx1_f_measures)))
-logger.info('GPF context 1 average f_measure %f' % (np.mean(gpf_ctx1_f_measures)))
-
-"""
-Context 2:
-with_whom=1
-venue=1
-Filter is too restrictive, no predictions can be generated
-"""
-gpf_ctx2_data = rating_data[(rating_data['with_whom'] == 1) & (rating_data['venue'] == 1)]
-logger.info('Generalized Pre-Filtering Context 2 data size: %d' % (len(gpf_ctx2_data)))
-
-kfg_2 = kf.split(list(gpf_ctx2_data.index))
-gpf_ctx2_f_measures = []
-for train_data, test_data in kfg_2:
-
-    train_data = gpf_ctx2_data.loc[gpf_ctx2_data.index[train_data]]
-    # Create rating sparse matrix from rating data
-    train_rating_matrix = train_data.pivot_table(values='rating', index='user_id', columns='imdb_id')
-
-    test_data = gpf_ctx2_data.loc[gpf_ctx2_data.index[test_data]]
-
-    logger.info('GPF Ctx2 fold cross validation with %d training data and %d testing data' % (len(train_data), len(test_data)))
-    prediction = predict_new_ratings(test_data, train_rating_matrix)
-
-    if (prediction is not None):
-        gpf_ctx2_f_measures.append(calculate_f_measure(prediction['grade'], prediction['predict_grade'], ['Good', 'Bad']))
-
-logger.info('GPF context 2 average f_measure list size: %d' % (len(gpf_ctx2_f_measures)))
-
-gpf2_rating_matrix = gpf_ctx2_data.pivot_table(values='rating', index='user_id', columns='imdb_id')
-logger.info('GPF context 2 too restrictive, no item is rated by more than one user, no neighbors can be found:\n %s' % (gpf2_rating_matrix))
+'''
+Best result
+2016-12-04 02:26:15,005 - INFO - Test alpha 1.000000
+2016-12-04 02:26:15,008 - INFO - Calculated RMSE using Ensemble method: 0.909691
+'''
