@@ -262,9 +262,8 @@ logger.info('Number of predicted rating with CF method: %f ' % (len(cf_predictio
 logger.info('Number of predicted rating with MF method: %f ' % (len(mf_predictions)))
 
 ensemble_result = pd.merge(cf_predictions, mf_predictions, how='outer', on=['user_id', 'business_id', 'rating'])
+ensemble_result = ensemble_result.drop_duplicates(['user_id', 'business_id', 'rating'])
 
-
-# Grid search to find the best alpha to combine CF and MF with
 ensemble_predict_df = pd.DataFrame(ensemble_result[['user_id', 'business_id', 'rating']])
 
 plot_alpha_serie = []
